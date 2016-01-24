@@ -865,6 +865,66 @@ func (c *cache) DecrementFloat64(k string, n float64) (float64, error) {
 	return nv, nil
 }
 
+// Queueing
+
+func (c *cache) InitQueue(k string, d time.Duration) error {
+	c.mu.Lock()
+	_, found := c.get(k)
+	if found {
+		c.mu.Unlock()
+		return fmt.Errorf("Item %s already exists", k)
+	}
+	q := make([]interface{}, 0)
+	c.set(k, q, d)
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *cache) Enqueue(k string, val interface{}) error {
+	c.mu.Lock()
+	v, found := c.items[k]
+	if !found || v.Expired() {
+		c.mu.Unlock()
+		return fmt.Errorf("Item %s not found", k)
+	}
+	rv, ok := v.Object.([]interface{})
+	if !ok {
+		c.mu.Unlock()
+		return fmt.Errorf("The value for %s is not a *[]interface{}", k)
+	}
+	nv := []interface{}{val}
+	nv = append(nv, rv...)
+	v.Object = nv
+	c.items[k] = v
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *cache) Dequeue(k string) (interface{}, error) {
+	c.mu.Lock()
+	v, found := c.items[k]
+	if !found || v.Expired() {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("Item %s not found", k)
+	}
+	rv, ok := v.Object.([]interface{})
+	if !ok {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("The value for %s is not a *[]interface{}", k)
+	}
+	rlen := len(rv)
+	if rlen <= 0 {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("Empty queue for %s ", k)
+	}
+	ret := rv[rlen-1]
+	nv := rv[:(rlen - 1)]
+	v.Object = nv
+	c.items[k] = v
+	c.mu.Unlock()
+	return ret, nil
+}
+
 // Delete an item from the cache. Does nothing if the key is not in the cache.
 func (c *cache) Delete(k string) {
 	c.mu.Lock()
